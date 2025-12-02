@@ -13,6 +13,7 @@ env:
   PYTHON_VERSION: "3.10"
 
 jobs:
+
   register-dataset:
     name: Register dataset -> HF
     runs-on: ubuntu-latest
@@ -20,160 +21,131 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Setup Python ${{ env.PYTHON_VERSION }}
+      - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/tourism_project/requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-
       - name: Install dependencies
-        run: python -m pip install --upgrade pip && pip install -r tourism_project/requirements.txt
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r tourism_project/requirements.txt
 
       - name: Register dataset on Hugging Face
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          # run the data register script if present
           if [ -f "tourism_project/model_building/data_register.py" ]; then
             python tourism_project/model_building/data_register.py
           else
-            echo "No data_register.py found — skipping dataset registration."
+            echo "data_register.py not found — skipping dataset registration."
           fi
 
+
   data-prep:
-    name: Data preparation
+    name: Data Preparation
     needs: register-dataset
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Setup Python ${{ env.PYTHON_VERSION }}
+      - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/tourism_project/requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-
       - name: Install dependencies
-        run: python -m pip install --upgrade pip && pip install -r tourism_project/requirements.txt
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r tourism_project/requirements.txt
 
-      - name: Run Data Preparation (supports multiple filenames)
+      - name: Run Data Preparation
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          set -e
           if [ -f "tourism_project/model_building/data_cleaning.py" ]; then
-            python tourism_project/model_building/data_cleaning.py --repo-id ${{ secrets.HF_DATASET_ID || 'sathishaiuse/Tourism-Package' }} || true
-          elif [ -f "tourism_project/model_building/prep.py" ]; then
-            python tourism_project/model_building/prep.py || true
+            python tourism_project/model_building/data_cleaning.py
           elif [ -f "tourism_project/model_building/data_prep.py" ]; then
-            python tourism_project/model_building/data_prep.py || true
+            python tourism_project/model_building/data_prep.py
           else
-            echo "No data prep script found (data_cleaning.py / prep.py / data_prep.py). Skipping."
+            echo "No data preparation script found — skipping."
           fi
 
-      - name: Upload processed data artifacts
+      - name: Upload processed data
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: processed-data
           path: tourism_project/data/processed
 
+
   model-training:
-    name: Model training & MLflow logging
+    name: Model Training & MLflow Logging
     needs: data-prep
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Setup Python ${{ env.PYTHON_VERSION }}
+      - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/tourism_project/requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-
       - name: Install dependencies
-        run: python -m pip install --upgrade pip && pip install -r tourism_project/requirements.txt
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r tourism_project/requirements.txt
 
-      - name: Prepare MLflow local backend directory
-        run: mkdir -p $GITHUB_WORKSPACE/mlruns
+      - name: Prepare MLflow directory
+        run: mkdir -p mlruns
 
-      - name: Run model training (logs to MLflow file backend)
+      - name: Run model training
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           MLFLOW_TRACKING_URI: file://${{ github.workspace }}/mlruns
         run: |
-          # prefer train.py; fallback to train_multi_model_mlflow_hf.py or tourism_project/model_building/train.py
           if [ -f "tourism_project/model_building/train.py" ]; then
             python tourism_project/model_building/train.py
-          elif [ -f "mlops/model_building/train.py" ]; then
-            python mlops/model_building/train.py
           else
-            echo "No recognized training script found; please ensure train.py exists."
+            echo "Training script not found. Please ensure train.py exists."
             exit 1
           fi
 
-      - name: Upload MLflow runs & artifacts
-        if: always()
+      - name: Upload MLflow artifacts
         uses: actions/upload-artifact@v4
         with:
           name: mlflow-artifacts
           path: mlruns
 
-      - name: Upload model & artifacts folder
-        if: always()
+      - name: Upload trained model artifacts
         uses: actions/upload-artifact@v4
         with:
           name: model-artifacts
           path: mlops/model_building/artifacts
 
+
   deploy-hosting:
-    name: Push deployment files to HF Space
+    name: Deploy to Hugging Face Space
     needs: [model-training, data-prep, register-dataset]
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Setup Python ${{ env.PYTHON_VERSION }}
+      - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/tourism_project/requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-
       - name: Install dependencies
-        run: python -m pip install --upgrade pip && pip install -r tourism_project/requirements.txt
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r tourism_project/requirements.txt
 
-      - name: Push files to Hugging Face Space
+      - name: Deploy to Hugging Face Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_SPACE_ID: ${{ secrets.HF_SPACE_ID }}
@@ -181,8 +153,14 @@ jobs:
           SPACE_PRIVATE: ${{ secrets.SPACE_PRIVATE || 'false' }}
           LOCAL_DEPLOY_FOLDER: tourism_project/deployment
         run: |
-          if [ ! -d "tourism_project/deployment" ]; then
-            echo "Deployment folder tourism_project/deployment not found — skipping hosting upload."
+          if [ -z "$HF_SPACE_ID" ]; then
+            echo "ERROR: HF_SPACE_ID secret is missing. Set it to: username/space-name"
             exit 1
           fi
+
+          if [ ! -d "$LOCAL_DEPLOY_FOLDER" ]; then
+            echo "ERROR: Deployment folder $LOCAL_DEPLOY_FOLDER not found."
+            exit 1
+          fi
+
           python tourism_project/hosting/hosting.py
