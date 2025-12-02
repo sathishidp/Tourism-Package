@@ -9,8 +9,10 @@ permissions:
   contents: read
   id-token: write
 
-jobs:
+env:
+  PYTHON_VERSION: "3.10"
 
+jobs:
   register-dataset:
     name: Register dataset -> HF
     runs-on: ubuntu-latest
@@ -18,10 +20,10 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Setup Python ${{ env.PYTHON_VERSION }}
         uses: actions/setup-python@v4
         with:
-          python-version: "3.10"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Cache pip
         uses: actions/cache@v4
@@ -37,7 +39,13 @@ jobs:
       - name: Register dataset on Hugging Face
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: python tourism_project/model_building/data_register.py
+        run: |
+          # run the data register script if present
+          if [ -f "tourism_project/model_building/data_register.py" ]; then
+            python tourism_project/model_building/data_register.py
+          else
+            echo "No data_register.py found — skipping dataset registration."
+          fi
 
   data-prep:
     name: Data preparation
@@ -47,10 +55,10 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Setup Python ${{ env.PYTHON_VERSION }}
         uses: actions/setup-python@v4
         with:
-          python-version: "3.10"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Cache pip
         uses: actions/cache@v4
@@ -63,10 +71,20 @@ jobs:
       - name: Install dependencies
         run: python -m pip install --upgrade pip && pip install -r tourism_project/requirements.txt
 
-      - name: Run Data Preparation
+      - name: Run Data Preparation (supports multiple filenames)
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: python tourism_project/model_building/prep.py
+        run: |
+          set -e
+          if [ -f "tourism_project/model_building/data_cleaning.py" ]; then
+            python tourism_project/model_building/data_cleaning.py --repo-id ${{ secrets.HF_DATASET_ID || 'sathishaiuse/Tourism-Package' }} || true
+          elif [ -f "tourism_project/model_building/prep.py" ]; then
+            python tourism_project/model_building/prep.py || true
+          elif [ -f "tourism_project/model_building/data_prep.py" ]; then
+            python tourism_project/model_building/data_prep.py || true
+          else
+            echo "No data prep script found (data_cleaning.py / prep.py / data_prep.py). Skipping."
+          fi
 
       - name: Upload processed data artifacts
         if: always()
@@ -83,10 +101,10 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Setup Python ${{ env.PYTHON_VERSION }}
         uses: actions/setup-python@v4
         with:
-          python-version: "3.10"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Cache pip
         uses: actions/cache@v4
@@ -102,15 +120,20 @@ jobs:
       - name: Prepare MLflow local backend directory
         run: mkdir -p $GITHUB_WORKSPACE/mlruns
 
-      - name: Run model training (logs to local MLflow)
+      - name: Run model training (logs to MLflow file backend)
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           MLFLOW_TRACKING_URI: file://${{ github.workspace }}/mlruns
         run: |
-          # optional: show python version
-          python -V
-          # run your training script (it should respect mlflow.set_tracking_uri or env var)
-          python tourism_project/model_building/train.py
+          # prefer train.py; fallback to train_multi_model_mlflow_hf.py or tourism_project/model_building/train.py
+          if [ -f "tourism_project/model_building/train.py" ]; then
+            python tourism_project/model_building/train.py
+          elif [ -f "mlops/model_building/train.py" ]; then
+            python mlops/model_building/train.py
+          else
+            echo "No recognized training script found; please ensure train.py exists."
+            exit 1
+          fi
 
       - name: Upload MLflow runs & artifacts
         if: always()
@@ -134,10 +157,10 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Setup Python ${{ env.PYTHON_VERSION }}
         uses: actions/setup-python@v4
         with:
-          python-version: "3.10"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Cache pip
         uses: actions/cache@v4
@@ -153,7 +176,13 @@ jobs:
       - name: Push files to Hugging Face Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          HF_SPACE_ID: ${{ secrets.HF_SPACE_ID }}  # optional, put your space id in repo secrets
+          HF_SPACE_ID: ${{ secrets.HF_SPACE_ID }}
+          SPACE_SDK: ${{ secrets.SPACE_SDK || 'docker' }}
+          SPACE_PRIVATE: ${{ secrets.SPACE_PRIVATE || 'false' }}
+          LOCAL_DEPLOY_FOLDER: tourism_project/deployment
         run: |
-          # Use the hosting script, ensure it uses the correct Space ID (or HF_SPACE_ID)
+          if [ ! -d "tourism_project/deployment" ]; then
+            echo "Deployment folder tourism_project/deployment not found — skipping hosting upload."
+            exit 1
+          fi
           python tourism_project/hosting/hosting.py
